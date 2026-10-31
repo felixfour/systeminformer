@@ -2574,6 +2574,75 @@ NtResumeProcess(
 #define NtCurrentSession() ((HANDLE)(LONG_PTR)-3)
 #define ZwCurrentSession() NtCurrentSession()
 
+// NtCurrentTebMbr macro: gets a member of TEB, using 1 less level of indirection in User Mode.
+// Does not work with (dereferenced) structs, but works with pointers. Use NtCurrentTeb()->struct
+// for structs. Also, NtCurrentTibMbr gets a member of the TIB in a similar way, working in kernel.
+// KeGetPcrMbr gets a member from PCR, if you are in Ke mode.
+
+// [internal impl]
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L
+#define _NTPSAPI_H_read_seg_switch(mbr, TYPE, reg) (                 \
+(__typeof__(((TYPE*)0)->mbr))                                        \
+(                                                                    \
+sizeof(((TYPE*)0)->mbr)==1?__read##reg##byte(FIELD_OFFSET(TEB,mbr)): \
+sizeof(((TYPE*)0)->mbr)==2?__read##reg##word(FIELD_OFFSET(TEB,mbr)): \
+sizeof(((TYPE*)0)->mbr)==4?__read##reg##dword(FIELD_OFFSET(TEB,mbr)):\
+__read##reg##qword(FIELD_OFFSET(TEB,mbr))                            \
+)                                                                    \
+)
+#else
+#define _NTPSAPI_H_read_seg_switch(mbr, TYPE, reg) (                 \
+(typeof(((TYPE*)0)->mbr))                                            \
+(                                                                    \
+sizeof(((TYPE*)0)->mbr)==1?__read##reg##byte(FIELD_OFFSET(TEB,mbr)): \
+sizeof(((TYPE*)0)->mbr)==2?__read##reg##word(FIELD_OFFSET(TEB,mbr)): \
+sizeof(((TYPE*)0)->mbr)==4?__read##reg##dword(FIELD_OFFSET(TEB,mbr)):\
+__read##reg##qword(FIELD_OFFSET(TEB,mbr))                            \
+)                                                                    \
+)
+#endif
+
+#if defined(_M_AMD64) && !defined(_M_ARM64EC) && !defined(__midl)
+#define NtCurrentTib ((NT_TIB*)_readgsbase_u64())
+#define NtCurrentTibMbr(member) _NTPSAPI_H_read_seg_switch(member, NT_TIB, gs)
+#if defined(_KERNEL_MODE) || PHNT_MODE == PHNT_MODE_KERNEL
+#define NtCurrentTebMbr(member) (NtCurrentTeb()->member)
+#define KeGetPcrMbr(member) _NTPSAPI_H_read_seg_switch(member, TEB, gs)
+#else
+#define NtCurrentTebMbr(member) _NTPSAPI_H_read_seg_switch(member, TEB, gs)
+#define NtCurrentTeb() ((TEB*)_readgsbase_u64()) /* Can remove */
+#endif //KERNEL
+//WOW64 defs
+#define 
+#define NtCurrentTib32Mbr(member) _NTPSAPI_H_read_seg_switch(member, NT_TIB32, fs)
+// I am not sure what fs points to in Ke mode
+#define NtCurrentTeb32Mbr(member) _NTPSAPI_H_read_seg_switch(member, TEB32, fs)
+#endif //AMD64
+
+#if (defined(_M_ARM64) || defined(_M_ARM64EC)) && !defined(__midl) && !defined(_M_CEE_PURE)
+#define NtCurrentTibMbr(member) _NTPSAPI_H_read_seg_switch(member, NT_TIB, x18)
+#if defined(_KERNEL_MODE) || PHNT_MODE == PHNT_MODE_KERNEL
+#define NtCurrentTebMbr(member) (NtCurrentTeb()->member)
+// I am not 100% sure on how the KPCR pointer works on Aarch64; I see a test of the NtTib.Self member
+// in the headers, and if it's zero then it gives the x18 base.
+#else
+#define NtCurrentTebMbr(member) _NTPSAPI_H_read_seg_switch(member, TEB, x18)
+#endif //KERNEL
+#endif //ARM64
+
+#if defined(_M_IX86) && !defined(MIDL_PASS) && !defined(_M_CEE_PURE)
+#define NtCurrentTibMbr(member) _NTPSAPI_H_read_seg_switch(member, NT_TIB, fs)
+#define NtCurrentTebMbr(member) _NTPSAPI_H_read_seg_switch(member, TEB, fs)
+#endif //IA32
+
+#ifndef NtCurrentTibMbr
+#define NtCurrentTibMbr(member) (NtCurrentTeb()->NtTib.member)
+#endif
+
+#ifndef NtCurrentTebMbr
+#define NtCurrentTebMbr(member) (NtCurrentTeb()->member)
+#endif
+
 #define NtCurrentPeb() (NtCurrentTeb()->ProcessEnvironmentBlock)
 
 #define NtCurrentProcessId() (NtCurrentTeb()->ClientId.UniqueProcess)
